@@ -59,6 +59,30 @@
 //. (for any type `a`) with an argument of type `a -> b` (for any type `b`),
 //. it returns a value of type `Maybe b`._
 //.
+//. ### Accessible pseudotype
+//.
+//. What is the type of values which support property access? In other words,
+//. what is the type of which every value except `null` and `undefined` is a
+//. member? [Object][] is close, but `Object.create(null)` produces a value
+//. which supports property access which is not a member of the Object type.
+//.
+//. Sanctuary uses the Accessible pseudotype to represent the set of values
+//. which support property access.
+//.
+//. ### TypeRep pseudotype
+//.
+//. What is the type of `Number`? One answer is `a -> Number`, since it's a
+//. function which takes an argument of any type and returns a Number value.
+//. When provided as the first argument to [`is`](#is), though, `Number` is
+//. really the value-level representative of the Number type.
+//.
+//. Sanctuary uses the TypeRep pseudotype to describe type representatives.
+//. For example:
+//.
+//.     Number :: TypeRep Number
+//.
+//. `Number` is the sole inhabitant of the TypeRep Number type.
+//.
 //. ## API
 
 ;(function() {
@@ -101,13 +125,13 @@
   });
 
   var Accessible = /* istanbul ignore next */ function Accessible() {};
-  var Type = /* istanbul ignore next */ function Type() {};
+  var TypeRep = /* istanbul ignore next */ function TypeRep() {};
   var a = {name: 'a'};
   var b = {name: 'b'};
   var c = {name: 'c'};
 
   var _is = function(type, x) {
-    return x != null && Object(x) instanceof type;
+    return x != null && (type === Accessible || Object(x) instanceof type);
   };
 
   var arity = function(n, f) {
@@ -119,7 +143,7 @@
     }
   };
 
-  //  curry :: (String, [Type], [*], Function) -> Function
+  //  curry :: (String, [TypeRep], [*], Function) -> Function
   var curry = function(name, types, _values, f) {
     return arity(R.filter(placeholder, _values).length, function() {
       var values = _values;  // Locally scoped variable to update.
@@ -161,7 +185,7 @@
               [paramIndex, name]
             ));
           }
-        } else if (!_is(type === Type ? Function : type, arg)) {
+        } else if (!_is(type === TypeRep ? Function : type, arg)) {
           throw new TypeError(format(
             '{quote} requires a value of type {type} as its {ord} argument; ' +
             'received {repr}',
@@ -210,7 +234,7 @@
 
   //. ### Classify
 
-  //# is :: Type -> a -> Boolean
+  //# is :: TypeRep a -> b -> Boolean
   //.
   //. Takes a type and a value of any type and returns `true` if the given
   //. value is of the specified type (either directly or via the prototype
@@ -231,7 +255,7 @@
   //. > S.is(String, 42)
   //. false
   //. ```
-  var is = S.is = def('is', [Type, a], _is);
+  var is = S.is = def('is', [TypeRep, a], _is);
 
   //. ### Combinator
 
@@ -253,7 +277,7 @@
 
   //. ### Maybe type
 
-  //# Maybe :: Type
+  //# Maybe :: TypeRep Maybe
   //.
   //. The Maybe type represents optional values: a value of type `Maybe a` is
   //. either a Just whose value is of type `a` or a Nothing (with no value).
@@ -465,7 +489,7 @@
   //. "Just([1, 2, 3])"
   //. ```
 
-  //# Maybe#type :: Type
+  //# Maybe#type :: TypeRep Maybe
   //.
   //. A reference to the Maybe type. Useful for determining whether two
   //. values such as `S.Nothing()` and `S.Just(42)` are of the same type.
@@ -624,7 +648,7 @@
 
   //. ### Either type
 
-  //# Either :: Type
+  //# Either :: TypeRep Either
   //.
   //. The Either type represents values with two possibilities: a value of type
   //. `Either a b` is either a Left whose value is of type `a` or a Right whose
@@ -798,7 +822,7 @@
   //. "Right([1, 2, 3])"
   //. ```
 
-  //# Either#type :: Type
+  //# Either#type :: TypeRep Either
   //.
   //. A reference to the Either type. Useful for determining whether two
   //. values such as `S.Left('Cannot divide by zero')` and `S.Right(42)`
@@ -1242,59 +1266,76 @@
   //. ```
   S.lastIndexOf = sanctifyIndexOf('lastIndexOf');
 
-  //# pluck :: String -> [{String: *}] -> [Maybe *]
+  //# pluck :: TypeRep a -> String -> [Accessible] -> [Maybe a]
   //.
-  //. Takes a list of objects and plucks the value of the specified key
-  //. for each object in the list. Returns the value wrapped in a Just
-  //. if an object has the key and a Nothing if it does not.
+  //. Takes a type, a property name, and a list of objects and returns a list
+  //. derived by "plucking" the value of the specified property from each of
+  //. the objects. The resulting list is of type `[Maybe a]`, where `a` is the
+  //. type specified by the first argument. A Nothing indicates that an object
+  //. does not have a value of type `a` at the specified property (possibly
+  //. because it does not have such a property).
+  //.
+  //. See also [`get`](#get).
   //.
   //. ```javascript
-  //. > S.pluck('a', [{a: 1, b: 2}, {a: 4, b: 5}, {b: 3, c: 7}])
-  //. [Just(1), Just(4), Nothing()]
-  //.
-  //. > S.pluck('x', [{x: 1}, {x: 2}, {x: undefined}])
-  //. [Just(1), Just(2), Just(undefined)]
+  //. > S.pluck(Number, 'x', [{x: 1}, {x: 2}, {x: '3'}, {x: null}, {}])
+  //. [Just(1), Just(2), Nothing(), Nothing(), Nothing()]
   //. ```
-  S.pluck = def('pluck', [String, Accessible], function(key, xs) {
-    return R.map(get(key), xs);
+  S.pluck =
+  def('pluck', [TypeRep, String, Accessible], function(type, key, xs) {
+    return R.map(get(type, key), xs);
   });
 
   //. ### Object
 
-  //# get :: String -> Object -> Maybe *
+  //# get :: TypeRep a -> String -> Accessible -> Maybe a
   //.
-  //. Takes a property name and an object and returns Just the value of
-  //. the specified property of the object if the object has such an own
-  //. property; Nothing otherwise.
+  //. Takes a type, a property name, and an object and returns Just the
+  //. value of the specified object property if it is of the specified
+  //. type (according to [`is`](#is)); Nothing otherwise.
+  //.
+  //. Since most values in the language inherit from Object, this type
+  //. acts a little like a wildcard.
+  //.
+  //. See also [`gets`](#gets).
   //.
   //. ```javascript
-  //. > S.get('x', {x: 1, y: 2})
+  //. > S.get(Number, 'x', {x: 1, y: 2})
   //. Just(1)
   //.
-  //. > S.get('toString', {x: 1, y: 2})
+  //. > S.get(Number, 'x', {x: '1', y: '2'})
+  //. Nothing()
+  //.
+  //. > S.get(Number, 'x', {})
   //. Nothing()
   //. ```
   var get = S.get =
-  def('get', [String, Accessible],
-      R.ifElse(R.has, R.compose(Just, R.prop), Nothing));
+  def('get', [TypeRep, String, Accessible], function(type, key, obj) {
+    return filter(is(type), Just(obj[key]));
+  });
 
-  //# gets :: [String] -> Object -> Maybe *
+  //# gets :: TypeRep a -> [String] -> Accessible -> Maybe a
   //.
-  //. Takes a list of property names and an object and returns Just the
-  //. value at the path specified by the list of property names if such
-  //. a path exists; Nothing otherwise.
+  //. Takes a type, a list of property names, and an object and returns Just
+  //. the value at the path specified by the list of property names if such
+  //. a path exists and the value is of the specified type; Nothing otherwise.
+  //.
+  //. See also [`get`](#get).
   //.
   //. ```javascript
-  //. > S.gets(['a', 'b', 'c'], {a: {b: {c: 42}}})
+  //. > S.gets(Number, ['a', 'b', 'c'], {a: {b: {c: 42}}})
   //. Just(42)
   //.
-  //. > S.gets(['a', 'b', 'c'], {})
+  //. > S.gets(Number, ['a', 'b', 'c'], {a: {b: {c: '42'}}})
+  //. Nothing()
+  //.
+  //. > S.gets(Number, ['a', 'b', 'c'], {})
   //. Nothing()
   //. ```
-  S.gets = def('gets', [Accessible, Accessible], function(keys, obj) {
-    return R.reduce(function(acc, key) {
-      return R.chain(get(key), acc);
-    }, Just(obj), keys);
+  S.gets =
+  def('gets', [TypeRep, Accessible, Accessible], function(type, keys, obj) {
+    var f = function(m, k) { return R.chain(get(Accessible, k), m); };
+    return filter(is(type), R.reduce(f, Just(obj), keys));
   });
 
   //. ### Parse
@@ -1415,6 +1456,7 @@
 //. [Extend]:       https://github.com/fantasyland/fantasy-land#extend
 //. [Monad]:        https://github.com/fantasyland/fantasy-land#monad
 //. [Monoid]:       https://github.com/fantasyland/fantasy-land#monoid
+//. [Object]:       https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object
 //. [R.equals]:     http://ramdajs.com/docs/#equals
 //. [R.is]:         http://ramdajs.com/docs/#is
 //. [R.map]:        http://ramdajs.com/docs/#map
